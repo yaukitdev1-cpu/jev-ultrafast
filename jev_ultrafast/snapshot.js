@@ -55,8 +55,16 @@
   const actions=[];
   for (const e of document.querySelectorAll(selector)) {
     if (!safe(e) || !visible(e) || e.matches(':disabled') || e.closest('[aria-disabled="true"]')) continue;
-    const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2, rname=role(e);
-    if (!rname || r.width<=0 || r.height<=0 || x<0 || y<0 || x>=innerWidth || y>=innerHeight) continue;
+    const r0=e.getBoundingClientRect(), rname=role(e);
+    const menuItem=['menuitem','menuitemradio','option'].includes(rname);
+    if (!rname || r0.width<=0 || r0.height<=0) continue;
+    let r=r0, x=r.x+r.width/2, y=r.y+r.height/2;
+    if (menuItem && (x<0 || y<0 || x>=innerWidth || y>=innerHeight)) {
+      e.scrollIntoView({block:'nearest', inline:'nearest'});
+      r=e.getBoundingClientRect(); x=r.x+r.width/2; y=r.y+r.height/2;
+    }
+    if (!menuItem && (x<0 || y<0 || x>=innerWidth || y>=innerHeight)) continue;
+    if (r.width<=0 || r.height<=0) continue;
     if (rname==='gridcell' && e.querySelector('button,[role="button"]')) continue;
     const base={node:identity(e),role:rname,label:name(e)||rname,
       rect:{x:r.x,y:r.y,w:r.width,h:r.height}};
