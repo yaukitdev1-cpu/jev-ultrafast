@@ -140,6 +140,15 @@ def test_target_head_receives_control_state_and_full_next_step_rules(monkeypatch
     assert d["choice"] == "e3"
 
 
+def test_openrouter_key_uses_systemone(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("TYPESAFE_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    assert model.decision_call() == ("https://openrouter.ai/api/v1/systemone", "or-test")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-test")
+    assert model.decision_call() == ("https://api.typesafe.ai/v1/systemone", "ts-test")
+
+
 def test_quoted_task_text_still_uses_the_llm(monkeypatch):
     monkeypatch.setenv("TEXT_MODEL_API_KEY", "test")
     post = Mock(return_value={"choices": [{"message": {"content": '{"text":"Zurich"}'}}]})

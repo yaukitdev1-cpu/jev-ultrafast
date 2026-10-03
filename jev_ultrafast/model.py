@@ -12,6 +12,19 @@ from .questions import NEXT_ACTION, TARGET, TEXT_VALUE
 CLIENT = httpx.Client(http2=True, timeout=25)
 
 
+def decision_call():
+    """TypeSafe direct, or OpenRouter's compatible /v1/systemone."""
+    key = os.environ.get("TYPESAFE_API_KEY")
+    base = os.environ.get("TYPESAFE_BASE_URL")
+    if not key:
+        key = os.environ.get("OPENROUTER_API_KEY")
+        if key and not base:
+            base = "https://openrouter.ai/api"
+    if not key:
+        raise KeyError("TYPESAFE_API_KEY")
+    return f"{(base or 'https://api.typesafe.ai').rstrip('/')}/v1/systemone", key
+
+
 def post_json(url, key, body):
     for attempt in range(3):
         try:
@@ -116,7 +129,7 @@ def choose(state, goal, history):
         "questions": questions,
     }
     started = time.perf_counter()
-    result = post_json("https://api.typesafe.ai/v1/systemone", os.environ["TYPESAFE_API_KEY"], body)
+    result = post_json(*decision_call(), body)
     operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
     operation = operation_answer["choice"]
     target = None
