@@ -5,6 +5,7 @@ import time
 from copy import deepcopy
 from unittest.mock import Mock
 
+import httpx
 import pytest
 
 from jev_ultrafast import agent as loop
@@ -327,3 +328,21 @@ def test_navigation_during_prediction_reobserves_without_action(runner):
     assert runner.state["status"] == "ready"
     assert runner.state["decision"] is None
     runner.state["browser"].act.assert_not_called()
+
+
+def test_post_json_raises_on_200_with_error_body(monkeypatch):
+    response = httpx.Response(200, json={"error": {"message": "Model overloaded", "code": 500}})
+    monkeypatch.setattr(model.CLIENT, "post", lambda *a, **k: response)
+    with pytest.raises(RuntimeError, match="Model overloaded"):
+        model.post_json("https://provider.test/v1/chat/completions", "key", {})
+
+
+def test_text_helper_retries_malformed_sample(monkeypatch):
+    monkeypatch.setenv("TEXT_MODEL_API_KEY", "test")
+    responses = [
+        {"choices": [{"message": {"content": "not json"}}]},
+        {"choices": [{"message": {"content": '{"text": "Zurich"}'}}]},
+    ]
+    monkeypatch.setattr(model, "post_json", Mock(side_effect=lambda *a, **k: responses.pop(0)))
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    assert model.field_text({"goal": "Find a flight"})[0] == "Zurich"

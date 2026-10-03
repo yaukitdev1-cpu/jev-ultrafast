@@ -31,12 +31,31 @@ def post_json(url, key, body):
             response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
         except httpx.HTTPError:
             raise RuntimeError("Model connection failed; no action executed.") from None
-        if response.status_code in {429, 529, 503} and attempt < 2:
+        if response.status_code in {429, 503, 504, 529} and attempt < 2:
             time.sleep(0.5 * 2**attempt)
             continue
         if response.is_error:
-            raise RuntimeError(f"Model provider returned HTTP {response.status_code}; no action executed.")
-        return response.json()
+            detail = ""
+            try:
+                detail = ": " + str(response.json()["error"]["message"])[:300]
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                pass
+            raise RuntimeError(f"Model provider returned HTTP {response.status_code}{detail}; no action executed.")
+        try:
+            data = response.json()
+        except ValueError:
+            if attempt < 2:
+                time.sleep(0.5 * 2**attempt)
+                continue
+            raise RuntimeError("Model provider returned an invalid response body; no action executed.")
+        error = data.get("error") if isinstance(data, dict) else None
+        if error:
+            message = error.get("message", error) if isinstance(error, dict) else error
+            if attempt < 2 and isinstance(error, dict) and error.get("code") in {429, 503, 504, 529}:
+                time.sleep(0.5 * 2**attempt)
+                continue
+            raise RuntimeError(f"Model provider returned an error: {message}")
+        return data
     raise RuntimeError("Model unavailable")
 
 
@@ -161,6 +180,17 @@ def choose(state, goal, history):
     }
 
 
+def _strip_code_fences(text):
+    if not isinstance(text, str):
+        raise ValueError("Text helper response was not a string")
+    lines = text.strip().splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
 def field_context(goal, action, page, history):
     return {
         "goal": goal,
@@ -180,32 +210,36 @@ def field_text(context):
     if os.environ.get("TEXT_MODEL_REASONING") == "none":
         reasoning = {"reasoning": {"enabled": False}}
     started = time.perf_counter()
-    result = post_json(
-        base + "/chat/completions",
-        key,
-        {
-            "model": model,
-            "max_tokens": 1024,
-            "response_format": {"type": "json_object"},
-            **reasoning,
-            "messages": [
-                {"role": "system", "content": TEXT_VALUE},
+    for attempt in range(3):
+        content = None
+        try:
+            result = post_json(
+                base + "/chat/completions",
+                key,
                 {
-                    "role": "user",
-                    "content": json.dumps(context),
+                    "model": model,
+                    "max_tokens": 1024,
+                    "response_format": {"type": "json_object"},
+                    **reasoning,
+                    "messages": [
+                        {"role": "system", "content": TEXT_VALUE},
+                        {"role": "user", "content": json.dumps(context)},
+                    ],
                 },
-            ],
-        },
-    )
-    try:
-        output = json.loads(result["choices"][0]["message"]["content"])
-        value = output["text"]
-        if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
-            raise ValueError()
-    except (ValueError, KeyError, TypeError):
-        raise ValueError("Text helper returned no valid field value; nothing typed.") from None
-    return value, {
-        "model": model,
-        "latency_ms": round((time.perf_counter() - started) * 1000),
-        "usage": result.get("usage", {}),
-    }
+            )
+            content = result["choices"][0]["message"]["content"]
+            output = json.loads(_strip_code_fences(content))
+            value = output["text"]
+            if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
+                raise ValueError()
+        except (RuntimeError, KeyError, IndexError, TypeError, ValueError) as exc:
+            if attempt < 2:
+                time.sleep(0.5 * 2**attempt)
+                continue
+            detail = f" Response: {content!r}" if content is not None else f" Request failed: {exc}"
+            raise ValueError(f"Text helper returned no valid field value; nothing typed.{detail}") from None
+        return value, {
+            "model": model,
+            "latency_ms": round((time.perf_counter() - started) * 1000),
+            "usage": result.get("usage", {}),
+        }
