@@ -322,6 +322,18 @@ def test_text_helper_rejects_invalid_values(monkeypatch, content):
         model.field_text({"goal": "Find a flight"})
 
 
+def test_tick_waits_out_navigation_before_giving_up(runner, monkeypatch):
+    settled = page()
+    settled["url"] = "https://en.wikipedia.org/wiki/Rosetta_Stone"
+    runner.state["browser"].fresh.return_value = False
+    runner.state["browser"].observe.side_effect = [StalePage("Document is navigating"), settled]
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    runner.command("tick")
+    assert runner.state["status"] == "ready"
+    assert runner.state["page"]["url"].endswith("Rosetta_Stone")
+    runner.state["browser"].act.assert_not_called()
+
+
 def test_navigation_during_prediction_reobserves_without_action(runner):
     runner.state["browser"].fresh.side_effect = StalePage("Document navigating")
     runner.command("tick")

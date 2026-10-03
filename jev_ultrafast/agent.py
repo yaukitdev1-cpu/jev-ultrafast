@@ -59,7 +59,15 @@ class Agent:
             except StalePage:
                 state["decision"] = None
                 state["status"] = "ready"
-                state["page"] = state["browser"].observe(screenshot=self.screenshots)
+                # observe() only waits ~200ms. A search submit keeps navigating longer than that.
+                for attempt in range(12):
+                    try:
+                        state["page"] = state["browser"].observe(screenshot=self.screenshots)
+                        break
+                    except StalePage:
+                        if attempt == 11:
+                            raise
+                        time.sleep(0.3)
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return self.snapshot()
         elif name == "predict":
